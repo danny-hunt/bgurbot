@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>bgurbot settings</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      }
+      body { margin: 0; padding: 16px; }
+      h1 { font-size: 18px; margin: 0 0 12px; }
+      h2 { font-size: 14px; margin: 16px 0 6px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.05em; }
+      .row { display: grid; grid-template-columns: 200px 1fr; align-items: center; gap: 8px 12px; padding: 4px 0; }
+      input[type="text"], input[type="number"], select {
+        width: 100%; padding: 4px 6px; font-size: 13px;
+        border: 1px solid rgba(128,128,128,0.4); border-radius: 4px; background: transparent;
+      }
+      .hk-capture {
+        display: inline-flex; align-items: center; gap: 8px;
+        padding: 4px 8px; border: 1px solid rgba(128,128,128,0.4); border-radius: 4px;
+        font-family: monospace; cursor: pointer; min-height: 24px;
+      }
+      .hk-capture.capturing { background: rgba(100,150,255,0.2); }
+      .hk-clear { font-size: 11px; opacity: 0.6; cursor: pointer; padding: 2px 6px; }
+      button { padding: 4px 10px; cursor: pointer; }
+      .status-bar {
+        position: sticky; top: 0; padding: 6px 8px; margin: -16px -16px 8px;
+        background: rgba(128,128,128,0.1); border-bottom: 1px solid rgba(128,128,128,0.2);
+        font-size: 12px;
+      }
+      .toast { position: fixed; bottom: 12px; right: 12px; background: rgba(0,0,0,0.7); color: white; padding: 8px 12px; border-radius: 6px; font-size: 12px; }
+      .danger { color: #e44; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>
