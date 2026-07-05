@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { Settings, StatusReport, HotkeyMap } from "../../shared/types";
+import type { CostBreakdown, CostReport, Settings, StatusReport, HotkeyMap } from "../../shared/types";
 import type { SettingsBridge } from "../../preload/settings";
 
 declare global {
@@ -18,6 +18,7 @@ const HOTKEY_LABELS: Record<HotkeyKey, string> = {
   pause: "Pause / Resume",
   skip: "Skip / Next",
   replay: "Replay current source",
+  replayTranslation: "Replay translation",
 };
 
 const captureAccelerator = (ev: KeyboardEvent): string | null => {
@@ -90,6 +91,93 @@ function HotkeyCapture({
   );
 }
 
+const fmtMoney = (v: number): string =>
+  v > 0 && v < 0.01 ? `$${v.toFixed(4)}` : `$${v.toFixed(2)}`;
+
+const fmtCount = (v: number): string =>
+  v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M`
+  : v >= 10_000 ? `${Math.round(v / 1000)}k`
+  : v >= 1_000 ? `${(v / 1000).toFixed(1)}k`
+  : String(v);
+
+function CostsSection() {
+  const [report, setReport] = useState<CostReport | null>(null);
+
+  useEffect(() => {
+    const refresh = () => void window.api.getCosts().then(setReport).catch(() => {});
+    refresh();
+    window.addEventListener("focus", refresh);
+    const timer = setInterval(refresh, 30_000);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      clearInterval(timer);
+    };
+  }, []);
+
+  if (!report) return null;
+  const cols: Array<[string, CostBreakdown]> = [
+    ["Today", report.today],
+    ["This month", report.thisMonth],
+    ["All time", report.allTime],
+  ];
+  const all = report.allTime;
+  const rows: Array<[string, string, (b: CostBreakdown) => number]> = [
+    ["Speech (TTS)", `${fmtCount(all.ttsChars)} chars · ${fmtCount(all.ttsCalls)} calls`, (b) => b.ttsCost],
+    ["OpenAI (gpt-5-nano)", `${fmtCount(all.openaiInputTokens)} in / ${fmtCount(all.openaiOutputTokens)} out tokens · ${fmtCount(all.openaiCalls)} calls`, (b) => b.openaiCost],
+    ["Translator", `${fmtCount(all.translitChars)} chars · ${fmtCount(all.translitCalls)} calls`, (b) => b.translitCost],
+  ];
+  const r = report.rates;
+
+  return (
+    <>
+      <h2>API costs (estimated)</h2>
+      <table className="costs">
+        <thead>
+          <tr>
+            <th>Service</th>
+            {cols.map(([label]) => (
+              <th key={label}>{label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([label, detail, pick]) => (
+            <tr key={label}>
+              <td>
+                {label}
+                <span className="costs-detail">{detail}</span>
+              </td>
+              {cols.map(([col, b]) => (
+                <td key={col}>{fmtMoney(pick(b))}</td>
+              ))}
+            </tr>
+          ))}
+          <tr className="total">
+            <td>Total</td>
+            {cols.map(([col, b]) => (
+              <td key={col}>{fmtMoney(b.totalCost)}</td>
+            ))}
+          </tr>
+        </tbody>
+      </table>
+      <div className="costs-note">
+        Estimated from metered usage × pay-as-you-go list prices (TTS ${r.ttsPerMillionChars}/M chars,
+        gpt-5-nano ${r.openaiInputPerMillionTokens}/${r.openaiOutputPerMillionTokens} per M tokens in/out,
+        Translator ${r.translitPerMillionChars}/M chars). Free-tier allowances are not reflected — check the
+        Azure portal for billed amounts. Tracking since {new Date(report.since).toLocaleDateString()}.
+      </div>
+      <button
+        onClick={async () => {
+          if (!window.confirm("Reset all cost counters?")) return;
+          setReport(await window.api.resetCosts());
+        }}
+      >
+        Reset counters
+      </button>
+    </>
+  );
+}
+
 function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [status, setStatus] = useState<StatusReport | null>(null);
@@ -141,6 +229,83 @@ function App() {
 
       <h1>bgurbot</h1>
 
+      <h2>Habit</h2>
+      <div className="row">
+        <label>Habit anchor</label>
+        <div>
+          <input
+            type="text"
+            placeholder="make my morning coffee"
+            value={settings.habitAnchor}
+            onChange={(e) => persist({ habitAnchor: e.target.value })}
+          />
+          <span className="hint">
+            "After I ___, I'll do my daily dose." Writing down an if-then plan makes
+            follow-through 2–3× more likely.
+          </span>
+        </div>
+      </div>
+      <div className="row">
+        <label>Daily reminder</label>
+        <div>
+          <input
+            type="time"
+            value={settings.dailyReminderTime}
+            onChange={(e) => persist({ dailyReminderTime: e.target.value })}
+          />
+          <span className="hint">one notification per day — clear it to turn off</span>
+        </div>
+      </div>
+      <div className="row">
+        <label>Daily dose</label>
+        <div>
+          <input
+            type="number"
+            min={1}
+            value={settings.dailyDoseCards}
+            onChange={(e) => persist({ dailyDoseCards: Number(e.target.value) })}
+            style={{ width: 80 }}
+          />
+          <span className="hint">sentences per day — small enough to finish</span>
+        </div>
+      </div>
+      <div className="row">
+        <label>Weekly goal</label>
+        <div>
+          <input
+            type="number"
+            min={1}
+            max={7}
+            value={settings.weeklyGoalDays}
+            onChange={(e) => persist({ weeklyGoalDays: Number(e.target.value) })}
+            style={{ width: 80 }}
+          />
+          <span className="hint">days per week that count as a win</span>
+        </div>
+      </div>
+      <div className="row">
+        <label>Ease me back in after a break</label>
+        <label>
+          <input
+            type="checkbox"
+            checked={settings.amnestyEnabled}
+            onChange={(e) => persist({ amnestyEnabled: e.target.checked })}
+          />{" "}
+          gentle, capped comeback sessions instead of a scary backlog
+        </label>
+      </div>
+      <div className="row">
+        <label>Start at login</label>
+        <label>
+          <input
+            type="checkbox"
+            checked={settings.launchAtLogin}
+            onChange={(e) => persist({ launchAtLogin: e.target.checked })}
+          />{" "}
+          start bgurbot when you log in to macOS
+        </label>
+      </div>
+
       <h2>Pacing</h2>
       <div className="row">
         <label>Pause before translation (s)</label>
@@ -149,15 +314,6 @@ function App() {
           min={0}
           value={settings.pauseSeconds}
           onChange={(e) => persist({ pauseSeconds: Number(e.target.value) })}
-        />
-      </div>
-      <div className="row">
-        <label>Gap before next sentence (s)</label>
-        <input
-          type="number"
-          min={0}
-          value={settings.gapSeconds}
-          onChange={(e) => persist({ gapSeconds: Number(e.target.value) })}
         />
       </div>
       <div className="row">
@@ -199,12 +355,18 @@ function App() {
       </div>
       <div className="row">
         <label>New cards per day</label>
-        <input
-          type="number"
-          min={0}
-          value={settings.newCardsPerDay}
-          onChange={(e) => persist({ newCardsPerDay: Number(e.target.value) })}
-        />
+        <div>
+          <input
+            type="number"
+            min={0}
+            value={settings.newCardsPerDay}
+            onChange={(e) => persist({ newCardsPerDay: Number(e.target.value) })}
+            style={{ width: 80 }}
+          />
+          <span className="hint">
+            every new card is future review debt — 10–20 keeps the habit sustainable
+          </span>
+        </div>
       </div>
       <div className="row">
         <label>Reviews per day</label>
@@ -214,6 +376,19 @@ function App() {
           value={settings.reviewsPerDay}
           onChange={(e) => persist({ reviewsPerDay: Number(e.target.value) })}
         />
+      </div>
+
+      <h2>Player</h2>
+      <div className="row">
+        <label>Reply suggestions</label>
+        <label>
+          <input
+            type="checkbox"
+            checked={settings.suggestionsEnabled}
+            onChange={(e) => persist({ suggestionsEnabled: e.target.checked })}
+          />{" "}
+          suggest replies you could say (uses the LLM once per card)
+        </label>
       </div>
 
       <h2>Hotkeys</h2>
@@ -252,6 +427,8 @@ function App() {
           </button>
         </div>
       </div>
+
+      <CostsSection />
 
       <h2>Loop</h2>
       <div className="row">

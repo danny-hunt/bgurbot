@@ -13,7 +13,7 @@
       h1 { font-size: 18px; margin: 0 0 12px; }
       h2 { font-size: 14px; margin: 16px 0 6px; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.05em; }
       .row { display: grid; grid-template-columns: 200px 1fr; align-items: center; gap: 8px 12px; padding: 4px 0; }
-      input[type="text"], input[type="number"], select {
+      input[type="text"], input[type="number"], input[type="time"], select {
         width: 100%; padding: 4px 6px; font-size: 13px;
         border: 1px solid rgba(128,128,128,0.4); border-radius: 4px; background: transparent;
       }
@@ -25,6 +25,7 @@
       .hk-capture.capturing { background: rgba(100,150,255,0.2); }
       .hk-clear { font-size: 11px; opacity: 0.6; cursor: pointer; padding: 2px 6px; }
       button { padding: 4px 10px; cursor: pointer; }
+      .hint { display: block; font-size: 11px; opacity: 0.6; margin-top: 2px; }
       .status-bar {
         position: sticky; top: 0; padding: 6px 8px; margin: -16px -16px 8px;
         background: rgba(128,128,128,0.1); border-bottom: 1px solid rgba(128,128,128,0.2);
@@ -32,6 +33,13 @@
       }
       .toast { position: fixed; bottom: 12px; right: 12px; background: rgba(0,0,0,0.7); color: white; padding: 8px 12px; border-radius: 6px; font-size: 12px; }
       .danger { color: #e44; }
+      table.costs { border-collapse: collapse; font-size: 13px; width: 100%; max-width: 480px; }
+      table.costs th, table.costs td { text-align: right; padding: 4px 10px; border-bottom: 1px solid rgba(128,128,128,0.2); }
+      table.costs th:first-child, table.costs td:first-child { text-align: left; padding-left: 0; }
+      table.costs th { font-weight: 600; opacity: 0.7; }
+      table.costs tr.total td { font-weight: 600; border-bottom: none; }
+      .costs-detail { font-size: 11px; opacity: 0.55; display: block; }
+      .costs-note { font-size: 11px; opacity: 0.6; max-width: 480px; margin: 8px 0; }
     </style>
   </head>
   <body>

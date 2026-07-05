@@ -36,6 +36,15 @@ export interface AnkiNoteToAdd {
   options?: { allowDuplicate?: boolean };
 }
 
+const shuffle = <T,>(arr: T[]): T[] => {
+  const copy = arr.slice();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+};
+
 export class AnkiService {
   static readonly MODEL_NAME = "BgbotSentence";
   static readonly OPTIONS_GROUP = "bgbot";
@@ -78,6 +87,10 @@ export class AnkiService {
     return this.invoke<number[]>("findCards", { query });
   }
 
+  async findNotes(query: string): Promise<number[]> {
+    return this.invoke<number[]>("findNotes", { query });
+  }
+
   async getDeckNotes(deckName: string): Promise<AnkiNoteInfo[]> {
     return this.invoke<AnkiNoteInfo[]>("notesInfo", {
       query: `deck:"${deckName}"`,
@@ -100,6 +113,10 @@ export class AnkiService {
     return this.invoke<Array<number | null>>("addNotes", { notes });
   }
 
+  async updateNoteFields(noteId: number, fields: Record<string, string>): Promise<void> {
+    await this.invoke("updateNoteFields", { note: { id: noteId, fields } });
+  }
+
   /** Submit ratings: ease 1=Again, 2=Hard, 3=Good, 4=Easy. */
   async answerCards(answers: Array<{ cardId: number; ease: 1 | 2 | 3 | 4 }>): Promise<boolean[]> {
     if (answers.length === 0) return [];
@@ -108,25 +125,30 @@ export class AnkiService {
 
   /**
    * Cards that should be shown next: review-due cards first, then unseen new
-   * cards (subject to the daily new-cards cap).
+   * cards (subject to the daily new-cards cap). Both pools are shuffled so
+   * the session doesn't replay cards in Anki's fixed due/new ordering.
    */
   async pickPlayableCards(
     deckName: string,
     newCardsPerDay: number,
     limit = 50,
   ): Promise<number[]> {
-    const dueIds = await this.invoke<number[]>("findCards", {
-      query: `deck:"${deckName}" is:due`,
-    });
+    const dueIds = shuffle(
+      await this.invoke<number[]>("findCards", {
+        query: `deck:"${deckName}" is:due`,
+      }),
+    );
     if (dueIds.length >= limit) return dueIds.slice(0, limit);
 
     const newToday = await this.countNewToday(deckName);
     const remaining = Math.max(0, newCardsPerDay - newToday);
     if (remaining === 0) return dueIds;
 
-    const newIds = await this.invoke<number[]>("findCards", {
-      query: `deck:"${deckName}" is:new`,
-    });
+    const newIds = shuffle(
+      await this.invoke<number[]>("findCards", {
+        query: `deck:"${deckName}" is:new`,
+      }),
+    );
     return [...dueIds, ...newIds.slice(0, remaining)].slice(0, limit);
   }
 
@@ -146,29 +168,66 @@ export class AnkiService {
 
   /**
    * Create the BgbotSentence model if it doesn't exist. Two card templates so
-   * each note generates an English→Urdu card and an Urdu→English card.
+   * each note generates an English→Urdu card and an Urdu→English card. If the
+   * model exists from an older version without the Explanation field, add the
+   * field and refresh the templates in place.
    */
   async ensureModel(): Promise<void> {
+    const explanationHtml =
+      '{{#Explanation}}<div class="expl">{{Explanation}}</div>{{/Explanation}}';
+    const templates = {
+      "English → Urdu": {
+        Front: "{{English}}<br>{{EnglishAudio}}",
+        Back: `{{FrontSide}}<hr id=answer>{{UrduArabic}}<br>{{UrduRoman}}<br>{{UrduAudio}}${explanationHtml}`,
+      },
+      "Urdu → English": {
+        Front: "{{UrduArabic}}<br>{{UrduRoman}}<br>{{UrduAudio}}",
+        Back: `{{FrontSide}}<hr id=answer>{{English}}<br>{{EnglishAudio}}${explanationHtml}`,
+      },
+    };
+
     const names = await this.getModelNames();
-    if (names.includes(AnkiService.MODEL_NAME)) return;
-    await this.invoke("createModel", {
+    if (!names.includes(AnkiService.MODEL_NAME)) {
+      await this.invoke("createModel", {
+        modelName: AnkiService.MODEL_NAME,
+        inOrderFields: ["English", "UrduArabic", "UrduRoman", "EnglishAudio", "UrduAudio", "Explanation", "Suggestions"],
+        css: [
+          ".card { font-family: sans-serif; font-size: 22px; text-align: center; }",
+          ".expl { font-size: 15px; color: #888; margin-top: 12px; }",
+        ].join("\n"),
+        isCloze: false,
+        cardTemplates: Object.entries(templates).map(([Name, t]) => ({ Name, ...t })),
+      });
+      return;
+    }
+
+    const fields = await this.invoke<string[]>("modelFieldNames", {
       modelName: AnkiService.MODEL_NAME,
-      inOrderFields: ["English", "UrduArabic", "UrduRoman", "EnglishAudio", "UrduAudio"],
-      css: ".card { font-family: sans-serif; font-size: 22px; text-align: center; }",
-      isCloze: false,
-      cardTemplates: [
-        {
-          Name: "English → Urdu",
-          Front: "{{English}}<br>{{EnglishAudio}}",
-          Back: "{{FrontSide}}<hr id=answer>{{UrduArabic}}<br>{{UrduRoman}}<br>{{UrduAudio}}",
-        },
-        {
-          Name: "Urdu → English",
-          Front: "{{UrduArabic}}<br>{{UrduRoman}}<br>{{UrduAudio}}",
-          Back: "{{FrontSide}}<hr id=answer>{{English}}<br>{{EnglishAudio}}",
-        },
-      ],
     });
+    // Suggestions holds app-generated JSON; deliberately absent from templates.
+    const hadExplanation = fields.includes("Explanation");
+    for (const missing of ["Explanation", "Suggestions"].filter((f) => !fields.includes(f))) {
+      await this.invoke("modelFieldAdd", {
+        modelName: AnkiService.MODEL_NAME,
+        fieldName: missing,
+        index: fields.length,
+      });
+      fields.push(missing);
+    }
+    if (!hadExplanation) {
+      await this.invoke("updateModelTemplates", {
+        model: { name: AnkiService.MODEL_NAME, templates },
+      });
+      await this.invoke("updateModelStyling", {
+        model: {
+          name: AnkiService.MODEL_NAME,
+          css: [
+            ".card { font-family: sans-serif; font-size: 22px; text-align: center; }",
+            ".expl { font-size: 15px; color: #888; margin-top: 12px; }",
+          ].join("\n"),
+        },
+      }).catch(() => undefined); // styling is cosmetic; ignore older AnkiConnect
+    }
   }
 
   /**

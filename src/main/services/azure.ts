@@ -7,6 +7,7 @@ import {
 import { AzureOpenAI } from "openai";
 import type { LanguageCode } from "@shared/types";
 import { langToVoiceName } from "@shared/utils";
+import { recordOpenAI, recordTranslit, recordTTS } from "./costs";
 
 const TextTranslationClient = require("@azure-rest/ai-translation-text").default;
 
@@ -37,7 +38,12 @@ const translit = (): any => {
   return _translit;
 };
 
-export const makeOpenAICall = async (text: string): Promise<string> => {
+export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+
+export const makeOpenAICall = async (
+  text: string,
+  reasoningEffort: ReasoningEffort = "medium",
+): Promise<string> => {
   if (!process.env.AZURE_OPENAI_API_KEY) {
     throw new Error("AZURE_OPENAI_API_KEY missing");
   }
@@ -48,7 +54,9 @@ export const makeOpenAICall = async (text: string): Promise<string> => {
     ],
     max_completion_tokens: 16384,
     model: "gpt-5-nano",
+    reasoning_effort: reasoningEffort,
   });
+  recordOpenAI(result.usage?.prompt_tokens ?? 0, result.usage?.completion_tokens ?? 0);
   return result.choices[0]?.message?.content ?? "";
 };
 
@@ -78,12 +86,13 @@ export const textToSpeech = async (
             reject(new Error(result.errorDetails));
             return;
           }
+          recordTTS(text.length);
           resolve(Buffer.from(result.audioData));
         } finally {
           synthesizer.close();
         }
       },
-      (error) => {
+      (error: unknown) => {
         reject(error instanceof Error ? error : new Error(String(error)));
         synthesizer.close();
       },
@@ -98,5 +107,6 @@ export const transliterateUrdu = async (text: string): Promise<string> => {
   });
   const out = response.body[0]?.text;
   if (!out) throw new Error("Transliteration failed");
+  recordTranslit(text.length);
   return out;
 };

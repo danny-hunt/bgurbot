@@ -20,6 +20,7 @@
   },
   "include": [
     "src/renderer/**/*",
+    "src/preload/**/*",
     "src/audio/**/*",
     "src/shared/**/*"
   ]

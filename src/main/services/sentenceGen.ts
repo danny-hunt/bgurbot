@@ -2,7 +2,7 @@ import { makeOpenAICall, transliterateUrdu } from "./azure";
 import type { GeneratedSentence } from "@shared/types";
 import type { AnkiNoteInfo } from "./anki";
 
-const safeParseJSON = <T = unknown>(text: string): T => {
+export const safeParseJSON = <T = unknown>(text: string): T => {
   const trimmed = (text || "").trim();
   // Strip code fences if present, and grab the first JSON array we can find.
   const stripped = trimmed
@@ -68,7 +68,8 @@ export const generateBatch = async (
     "Use primarily the provided vocabulary list. Common function words are allowed.",
     "Keep sentences conversational, everyday, and 6–14 words long.",
     "Avoid duplicating sentence structures across the batch — vary the verbs, tenses, and subjects.",
-    `Generate exactly ${count} items as a strict JSON array. Each item: {"english": string, "urduArabic": string, "urduRoman": string}.`,
+    `Generate exactly ${count} items as a strict JSON array. Each item: {"english": string, "urduArabic": string, "urduRoman": string, "explanation": string}.`,
+    "The explanation is ONE brief English sentence (under 20 words) for a learner: how the translation maps, flagging any grammar oddity (idiom, word order, gender agreement, ergative 'ne', literal meaning). No preamble.",
     "Do not include any commentary.",
     "Vocabulary (English focus; Urdu provided for your reference):",
     JSON.stringify({ vocabEn, vocabUr }),
@@ -82,6 +83,7 @@ export const generateBatch = async (
     const english = String(item.english ?? "").trim();
     const urduArabic = String(item.urduArabic ?? item.urdu ?? "").trim();
     let urduRoman = String(item.urduRoman ?? "").trim();
+    const explanation = String(item.explanation ?? "").trim();
     if (!english) continue;
     if (!urduArabic && !urduRoman) continue;
     if (!urduRoman && urduArabic) {
@@ -91,7 +93,33 @@ export const generateBatch = async (
         urduRoman = "";
       }
     }
-    out.push({ english, urduArabic, urduRoman });
+    out.push({ english, urduArabic, urduRoman, explanation });
   }
   return out;
+};
+
+/**
+ * Write a brief explanation for each existing sentence pair (used for the
+ * hand-written seed sentences, which have no explanations). Returns copies
+ * with `explanation` filled in; order is preserved.
+ */
+export const generateExplanations = async (
+  sentences: GeneratedSentence[],
+): Promise<GeneratedSentence[]> => {
+  if (sentences.length === 0) return [];
+  const prompt = [
+    "You are a tutor annotating English↔Urdu sentence pairs for a learner.",
+    "For each pair below, write ONE brief English sentence (under 20 words) explaining how the translation maps,",
+    "flagging any grammar oddity (idiom, word order, gender agreement, ergative 'ne', literal meaning). No preamble.",
+    `Return a strict JSON array of exactly ${sentences.length} strings, in the same order as the input. No commentary.`,
+    "Pairs:",
+    JSON.stringify(sentences.map((s) => ({ english: s.english, urduArabic: s.urduArabic, urduRoman: s.urduRoman }))),
+  ].join("\n");
+
+  const raw = await makeOpenAICall(prompt);
+  const arr = safeParseJSON<unknown[]>(raw);
+  return sentences.map((s, i) => ({
+    ...s,
+    explanation: String(arr[i] ?? "").trim(),
+  }));
 };

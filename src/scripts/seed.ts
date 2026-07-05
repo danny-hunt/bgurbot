@@ -1,13 +1,14 @@
 import os from "node:os";
 import path from "node:path";
 import dotenv from "dotenv";
-import { populate } from "../main/services/populate";
+import { seedDeck } from "../main/services/populate";
+import { SEED_SENTENCES } from "../main/services/seedSentences";
 import { initCostStore } from "../main/services/costs";
 
 dotenv.config();
 
 // Track API spend in the same file the Electron app uses (its userData dir),
-// so CLI populate runs are counted too.
+// so CLI seed runs are counted too.
 initCostStore(
   path.join(os.homedir(), "Library", "Application Support", "bgurbot", "costs.json"),
 );
@@ -22,22 +23,14 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-const total = Number(argMap.get("total") ?? 200);
-const batch = Number(argMap.get("batch") ?? 10);
-const sourceDeck = argMap.get("source") ?? "Ling::Urdu";
 const targetDeck = argMap.get("deck") ?? "bgbot";
 const newPerDay = Number(argMap.get("new") ?? 200);
 const revPerDay = Number(argMap.get("rev") ?? 9999);
 
-console.log(`bgurbot populate: ${total} sentences in batches of ${batch}`);
-console.log(`  source: "${sourceDeck}" → target: "${targetDeck}"`);
-console.log(`  deck options: new/day=${newPerDay}, rev/day=${revPerDay}`);
+console.log(`bgurbot seed: ${SEED_SENTENCES.length} starter sentences → "${targetDeck}"`);
 
-populate({
-  vocabSourceDeck: sourceDeck,
+seedDeck(SEED_SENTENCES, {
   bgbotDeckName: targetDeck,
-  totalSentences: total,
-  batchSize: batch,
   newPerDay,
   revPerDay,
 })

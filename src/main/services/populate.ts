@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { AnkiService } from "./anki";
 import { textToSpeech } from "./azure";
-import { generateBatch, buildVocabPools } from "./sentenceGen";
+import { generateBatch, generateExplanations, buildVocabPools } from "./sentenceGen";
 import type { GeneratedSentence } from "@shared/types";
 
 export interface PopulateOptions {
@@ -34,7 +34,7 @@ const buildAudioAttachment = async (
   }
 };
 
-const commitBatch = async (
+export const commitBatch = async (
   anki: AnkiService,
   deckName: string,
   sentences: GeneratedSentence[],
@@ -58,6 +58,7 @@ const commitBatch = async (
       UrduRoman: s.urduRoman,
       EnglishAudio: "",
       UrduAudio: "",
+      Explanation: s.explanation ?? "",
     },
     tags: ["bgbot", "generated"],
     audio: audiosPerSentence[i].length > 0 ? audiosPerSentence[i] : undefined,
@@ -67,6 +68,63 @@ const commitBatch = async (
   const ids = await anki.addNotes(notes);
   const added = ids.filter((x) => x !== null).length;
   return { added, skipped: ids.length - added };
+};
+
+export interface SeedOptions {
+  bgbotDeckName: string;
+  newPerDay: number;
+  revPerDay: number;
+  batchSize?: number;
+  onProgress?: (msg: string) => void;
+}
+
+/**
+ * Load the hand-written starter sentences into the deck. The LLM only writes
+ * the brief per-card explanations; the sentences themselves are fixed.
+ * Duplicates (from re-running) are skipped by Anki.
+ */
+export const seedDeck = async (
+  sentences: GeneratedSentence[],
+  opts: SeedOptions,
+): Promise<{ added: number; skipped: number }> => {
+  const log = opts.onProgress ?? ((m: string) => console.log(m));
+  const batchSize = opts.batchSize ?? 10;
+  const anki = new AnkiService();
+
+  if (!(await anki.testConnection())) {
+    throw new Error("Anki is not reachable. Open Anki desktop with the AnkiConnect plugin enabled.");
+  }
+
+  log(`Ensuring deck "${opts.bgbotDeckName}" and model exists…`);
+  await anki.ensureModel();
+  await anki.ensureDeckOptions(opts.bgbotDeckName, opts.newPerDay, opts.revPerDay);
+
+  let totalAdded = 0;
+  let totalSkipped = 0;
+  const batchCount = Math.ceil(sentences.length / batchSize);
+  for (let i = 0; i < batchCount; i++) {
+    let batch = sentences.slice(i * batchSize, (i + 1) * batchSize);
+    log(`Batch ${i + 1}/${batchCount}: synthesizing audio + adding ${batch.length} sentences…`);
+    try {
+      if (batch.some((s) => !s.explanation)) {
+        try {
+          batch = await generateExplanations(batch);
+        } catch (err) {
+          log(`  ! explanation generation failed, continuing without: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      const { added, skipped } = await commitBatch(anki, opts.bgbotDeckName, batch);
+      totalAdded += added;
+      totalSkipped += skipped;
+      log(`  → added ${added}, skipped ${skipped} (duplicates).`);
+    } catch (err) {
+      log(`  ! batch ${i + 1} failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (i < batchCount - 1) await sleep(500);
+  }
+
+  log(`Done. Added ${totalAdded} cards (skipped ${totalSkipped} duplicates).`);
+  return { added: totalAdded, skipped: totalSkipped };
 };
 
 /**

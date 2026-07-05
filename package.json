@@ -8,7 +8,8 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
-    "populate": "electron-vite build && node out/main/populate.js"
+    "populate": "electron-vite build && node out/main/populate.js",
+    "seed": "electron-vite build && node out/main/seed.js"
   },
   "dependencies": {
     "@azure-rest/ai-translation-text": "^1.0.0-beta.1",

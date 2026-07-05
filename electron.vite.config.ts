@@ -11,6 +11,8 @@ export default defineConfig({
           index: resolve("src/main/index.ts"),
           // Build the populate CLI alongside main; run via `node out/main/populate.js`
           populate: resolve("src/scripts/populate.ts"),
+          // Seed CLI: loads the hand-written starter sentences (no LLM)
+          seed: resolve("src/scripts/seed.ts"),
         },
       },
     },
@@ -43,6 +45,7 @@ export default defineConfig({
         input: {
           settings: resolve("src/renderer/settings/index.html"),
           audio: resolve("src/renderer/audio/index.html"),
+          player: resolve("src/renderer/player/index.html"),
         },
       },
     },
