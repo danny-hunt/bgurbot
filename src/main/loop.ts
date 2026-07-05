@@ -5,7 +5,8 @@ import { getReplySuggestions, parseStoredSuggestions } from "./services/suggest"
 import { playAudio, stopAudio } from "./audio";
 import { getSettings } from "./settings";
 import { getDaysSinceLastActivity, getTodayAnsweredCount, recordAnswer } from "./services/stats";
-import type { CardSnapshot, Ease, HistoryEntry, LoopStatus, StatusReport } from "@shared/types";
+import { getPremiereCardIds, getPublicState } from "./services/story";
+import type { CardSnapshot, Ease, EpisodeRef, HistoryEntry, LoopStatus, StatusReport } from "@shared/types";
 
 interface CardWithDirection {
   card: AnkiCardInfo;
@@ -70,6 +71,8 @@ export class Loop extends EventEmitter {
   private sessionDay = localDayKey();
   /** Local day the one-shot "doseComplete" event was last emitted. */
   private doseCompleteEmittedDay: string | null = null;
+  /** Set while today's story episode is premiering (played in story order). */
+  private premiereEpisode: EpisodeRef | null = null;
   private current: CardWithDirection | null = null;
   private currentRating: Ease | null = null;
   private waitController: AbortController | null = null;
@@ -183,6 +186,7 @@ export class Loop extends EventEmitter {
       phaseEndsAt: this.phaseEndsAt,
       phaseDurationMs: this.phaseDurationMs,
       session: {
+        episode: this.premiereEpisode,
         answeredToday,
         doseTarget,
         doseComplete: answeredToday >= doseTarget,
@@ -247,6 +251,7 @@ export class Loop extends EventEmitter {
     this.welcomeBack = false;
     this.daysAway = null;
     this.sittingAnswered = 0;
+    this.premiereEpisode = null;
   }
 
   /**
@@ -352,17 +357,27 @@ export class Loop extends EventEmitter {
           }
         }
         this.newToday = await this.anki.countNewToday(deck).catch(() => 0);
+        // Story premiere: today's episode plays first, in story order — the
+        // lowest remaining card bypasses chooseNextCard's rotation. Rating,
+        // recording, and the finish-line gate above all apply unchanged.
+        let premiereId: number | null = null;
+        try {
+          premiereId = (await getPremiereCardIds(this.anki))[0] ?? null;
+        } catch (err) {
+          console.warn("[loop] premiere lookup failed", err);
+        }
+        this.premiereEpisode = premiereId !== null ? this.episodeRef() : null;
         this.emitStatus();
         console.log(`[loop] fetched ${dueIds.length} playable cards (newToday=${this.newToday})`);
 
-        if (dueIds.length === 0) {
+        if (dueIds.length === 0 && premiereId === null) {
           this.setStatus("topUp", "no due cards — requesting top-up");
           this.onTopUpNeeded?.();
           if ((await this.wait(30000)) === "aborted") continue;
           continue;
         }
 
-        const cards = await this.anki.getCardsInfo([this.chooseNextCard(dueIds)]);
+        const cards = await this.anki.getCardsInfo([premiereId ?? this.chooseNextCard(dueIds)]);
         const card = cards[0];
         if (!card) continue;
         const cardWithDir = this.buildCardWithDirection(card);
@@ -427,6 +442,12 @@ export class Loop extends EventEmitter {
         if ((await this.wait(2000)) === "aborted") continue;
       }
     }
+  }
+
+  /** The premiering episode, for getStatus()'s session.episode. */
+  private episodeRef(): EpisodeRef | null {
+    const s = getPublicState();
+    return s ? { number: s.episodeNumber, title: s.episodeTitle } : null;
   }
 
   /**

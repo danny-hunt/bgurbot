@@ -95,6 +95,13 @@ export interface Settings {
   dailyReminderTime: string;
   /** The user's if-then habit plan, e.g. "after I make my morning coffee". */
   habitAnchor: string;
+  /** Generate a daily serialized micro-story episode as the dose's new cards. */
+  storyEnabled: boolean;
+  /**
+   * Free-text profile woven into generated content (story, scenarios).
+   * Self-reference makes sentences more memorable — this is the fuel.
+   */
+  aboutMe: string;
   hotkeys: HotkeyMap;
 }
 
@@ -115,6 +122,12 @@ export const DEFAULT_SETTINGS: Settings = {
   launchAtLogin: false,
   dailyReminderTime: "",
   habitAnchor: "",
+  storyEnabled: true,
+  aboutMe:
+    "Danny, an English speaker living with his parents in their cottage in Cumnor, UK (near Oxford). " +
+    "His wife Sarah lives in Karachi with her family: her dad, her brother Azim, Azim's wife Shahzeen, " +
+    "and their young kids Ibrahim and Amanah. Danny and Sarah both love running and bouldering, and " +
+    "dream of opening a bouldering gym in Karachi.",
   // Defaults assume a Hyper key (Caps Lock → Ctrl+Alt+Shift+Cmd via Hyperkey).
   hotkeys: {
     rateAgain: "Control+Alt+Shift+Command+1",
@@ -175,8 +188,16 @@ export type LoopStatus =
   | "topUp"
   | "ankiUnreachable";
 
+/** The episode currently premiering (playing in order as today's new cards). */
+export interface EpisodeRef {
+  number: number;
+  title: string;
+}
+
 /** Where the user is in today's finite session. */
 export interface SessionProgress {
+  /** Set while today's story episode is premiering; null otherwise. */
+  episode?: EpisodeRef | null;
   /** Cards answered today, persisted across restarts. */
   answeredToday: number;
   doseTarget: number;
@@ -241,4 +262,35 @@ export interface StatsReport {
   recallRate30d: number | null;
   /** Milestones crossed recently, newest first (human-readable). */
   recentMilestones: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Story serial (idea 7) and scenario role-plays (idea 8)
+
+/** What the player may show about the serial. */
+export interface StoryPublicState {
+  episodeNumber: number;
+  episodeTitle: string;
+  /** Running "story so far" summary, learner-facing (English). */
+  storySoFar: string;
+}
+
+/** A role-play setting the user can start from the scenario menu. */
+export interface ScenarioContext {
+  id: string;
+  title: string;
+  /** One-line ideal-self vision frame, e.g. "You're at the dinner table…". */
+  vision: string;
+}
+
+/** One step of a live scenario: their line plus reply options for the user. */
+export interface ScenarioTurnResult {
+  /** The interlocutor's line. Play it, then show the options. */
+  them: GeneratedSentence;
+  /** 2-3 replies the learner could give (say aloud, then tap). */
+  options: ReplySuggestion[];
+  /** True when the scenario has wrapped up (them is the closing line). */
+  done: boolean;
+  /** Learner turns taken so far. */
+  turnCount: number;
 }

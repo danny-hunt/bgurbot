@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { ScenarioView } from "./scenario";
 import type {
   CardSnapshot,
   DayActivity,
   Ease,
+  EpisodeRef,
   HistoryEntry,
   LoopStatus,
   ReplySuggestion,
@@ -272,6 +274,37 @@ function HistoryItem({ entry }: { entry: HistoryEntry }) {
 }
 
 /**
+ * Compact banner shown above the card while today's story episode is
+ * premiering. "Story so far" lazily fetches the running summary on first
+ * open — no fetch (and no layout change) unless the user asks for it.
+ */
+function EpisodeBanner({ episode }: { episode: EpisodeRef }) {
+  const [open, setOpen] = useState(false);
+  const [soFar, setSoFar] = useState<string | null>(null);
+  const toggle = () => {
+    setOpen((o) => !o);
+    // Guarded like getStats — a stale main build may lack the handler.
+    if (soFar === null && typeof window.api.getStory === "function") {
+      void window.api
+        .getStory()
+        .then((s) => setSoFar(s?.storySoFar || "(no summary yet)"))
+        .catch(() => setSoFar("(story summary unavailable)"));
+    }
+  };
+  return (
+    <div className="episode-banner">
+      <div className="episode-head" onClick={toggle}>
+        <span className="episode-title">
+          Episode {episode.number} — {episode.title}
+        </span>
+        <span className="episode-toggle">{open ? "hide ▴" : "story so far ▾"}</span>
+      </div>
+      {open && <div className="episode-sofar">{soFar || "loading…"}</div>}
+    </div>
+  );
+}
+
+/**
  * Slim daily-dose progress strip pinned under the status bar. Always rendered
  * (with graceful fallbacks while session/settings load) so the layout never
  * jumps when the data arrives.
@@ -317,13 +350,18 @@ function DoseCompletePanel({
   stats,
   onDone,
   onKeepGoing,
+  onScenario,
 }: {
   session: SessionProgress | undefined;
   stats: StatsReport | null;
   onDone: () => void;
   onKeepGoing: () => void;
+  onScenario: () => void;
 }) {
   const n = session?.answeredToday ?? stats?.today?.answered ?? 0;
+  // Set only when the dose finished mid-premiere — the rest of the episode
+  // simply premieres next sitting.
+  const episode = session?.episode ?? null;
   return (
     <div className="card-panel celebrate">
       <div className="celebrate-mark" aria-hidden="true">
@@ -332,6 +370,13 @@ function DoseCompletePanel({
       <div className="celebrate-title">
         Done for today — {n} sentence{n === 1 ? "" : "s"}
       </div>
+      {episode && (
+        <div className="celebrate-stats">
+          <span>
+            Episode {episode.number} — {episode.title} — continues next time
+          </span>
+        </div>
+      )}
       {stats && (
         <div className="celebrate-stats">
           {stats.weekStreak > 0 && <span>{stats.weekStreak}-week streak</span>}
@@ -345,6 +390,7 @@ function DoseCompletePanel({
         <button className="primary" onClick={onDone}>
           Done — see you tomorrow
         </button>
+        <button onClick={onScenario}>Bonus: try a scenario 🎭</button>
         <button onClick={onKeepGoing}>Keep going (ambient)</button>
       </div>
     </div>
@@ -498,6 +544,7 @@ function App() {
   const [suggestions, setSuggestions] = useState<ReplySuggestion[] | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [stats, setStats] = useState<StatsReport | null>(null);
+  const [scenarioOpen, setScenarioOpen] = useState(false);
   const cardIdRef = useRef<number | null>(null);
   const prevStatusRef = useRef<LoopStatus | null>(null);
 
@@ -615,6 +662,13 @@ function App() {
     void window.api.rate(ease);
   };
 
+  // Full-pane scenario mode (after all hooks — this return is unconditional
+  // for hook ordering). The SRS loop keeps running underneath; scenarios are
+  // deliberately playable any time, not just from the finish line.
+  if (scenarioOpen) {
+    return <ScenarioView onExit={() => setScenarioOpen(false)} />;
+  }
+
   return (
     <>
       <div className="status-bar">
@@ -625,12 +679,17 @@ function App() {
       <DoseBar status={status} settings={settings} />
 
       <div className="scroll">
+        {status?.session?.episode && status.status !== "doseComplete" && (
+          <EpisodeBanner episode={status.session.episode} />
+        )}
+
         {status?.status === "doseComplete" && !status.session?.ambient ? (
           <DoseCompletePanel
             session={status.session}
             stats={stats}
             onDone={() => void window.api.controlLoop("pause")}
             onKeepGoing={() => void window.api.controlLoop("skip")}
+            onScenario={() => setScenarioOpen(true)}
           />
         ) : card ? (
           <CardPanel card={card} status={status} revealed={revealed} onReveal={reveal} />
@@ -692,6 +751,9 @@ function App() {
 
       <div className="footer">
         <span className="muted">bgurbot</span>
+        <button title="Scenario role-play" onClick={() => setScenarioOpen(true)}>
+          🎭
+        </button>
         <button title="Settings" onClick={() => void window.api.openSettings()}>
           ⚙
         </button>

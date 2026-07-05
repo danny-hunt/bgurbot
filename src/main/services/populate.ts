@@ -38,6 +38,7 @@ export const commitBatch = async (
   anki: AnkiService,
   deckName: string,
   sentences: GeneratedSentence[],
+  extraTags: string[] = [],
 ): Promise<{ added: number; skipped: number }> => {
   const audiosPerSentence = await Promise.all(
     sentences.map(async (s) => {
@@ -60,7 +61,7 @@ export const commitBatch = async (
       UrduAudio: "",
       Explanation: s.explanation ?? "",
     },
-    tags: ["bgbot", "generated"],
+    tags: ["bgbot", "generated", ...extraTags],
     audio: audiosPerSentence[i].length > 0 ? audiosPerSentence[i] : undefined,
     options: { allowDuplicate: false },
   }));

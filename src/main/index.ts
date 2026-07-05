@@ -12,6 +12,8 @@ import { lookupTranslation } from "./services/translate";
 import { textToSpeech } from "./services/azure";
 import { getCostReport, initCostStore, resetCosts } from "./services/costs";
 import { getRecentHistory, getStatsReport, initStatsStore } from "./services/stats";
+import { ensureTodayEpisode, getPublicState, initStoryStore, storyGenerationInFlight } from "./services/story";
+import { registerScenarioIpc } from "./services/scenario";
 import { initReminder, rescheduleReminder } from "./services/reminder";
 import type {
   CardSnapshot,
@@ -61,13 +63,29 @@ loop.on("status", broadcastStatus);
 loop.on("card", (snapshot: CardSnapshot | null) => broadcast("card:update", snapshot));
 loop.on("history", (entry: HistoryEntry) => broadcast("history:append", entry));
 
-const triggerTopUp = async (sentenceCount = 10) => {
+const triggerTopUp = async (sentenceCount = 10, storyFirst = false) => {
   if (topUpInFlight) return;
   topUpInFlight = true;
   loop.setGenerating(true);
   const settings = getSettings();
-  console.log(`Top-up: generating ${sentenceCount} sentences…`);
   try {
+    // The daily story episode IS the day's new material — when the loop asks
+    // for a top-up, generate it first and skip the generic populate for this
+    // round. Generic populate remains the fallback (story disabled, today's
+    // episode already generated, or generation failed).
+    if (storyFirst) {
+      if (await ensureTodayEpisode()) {
+        console.log("Top-up: story episode generated — skipping generic top-up");
+        return;
+      }
+      // A generation kicked off elsewhere (startup / periodic check) is
+      // about to deliver the day's material — don't populate on top of it.
+      if (storyGenerationInFlight()) {
+        console.log("Top-up: story episode already generating — skipping generic top-up");
+        return;
+      }
+    }
+    console.log(`Top-up: generating ${sentenceCount} sentences…`);
     await populate({
       vocabSourceDeck: settings.vocabSourceDeck,
       bgbotDeckName: settings.bgbotDeckName,
@@ -86,7 +104,7 @@ const triggerTopUp = async (sentenceCount = 10) => {
 };
 
 loop.setTopUpHandler(() => {
-  void triggerTopUp(10);
+  void triggerTopUp(10, true);
 });
 
 const applyLoginItem = (settings: Settings) => {
@@ -269,6 +287,8 @@ ipcMain.handle("costs:get", () => getCostReport());
 ipcMain.handle("costs:reset", () => resetCosts());
 ipcMain.handle("stats:get", () => getStatsReport());
 ipcMain.handle("history:recent", () => getRecentHistory());
+ipcMain.handle("story:state", () => getPublicState());
+registerScenarioIpc();
 
 app.on("activate", () => {
   // dock icon click
@@ -278,6 +298,7 @@ app.on("activate", () => {
 app.whenReady().then(async () => {
   initCostStore(path.join(app.getPath("userData"), "costs.json"));
   initStatsStore(path.join(app.getPath("userData"), "stats.json"));
+  initStoryStore(path.join(app.getPath("userData"), "story.json"));
   console.log("[bgurbot] ready; cwd =", process.cwd());
   console.log("[bgurbot] AZURE_SPEECH_KEY set?", !!process.env.AZURE_SPEECH_KEY);
   console.log("[bgurbot] settings file:", settingsPath());
@@ -306,6 +327,12 @@ app.whenReady().then(async () => {
   }
 
   loop.start();
+
+  // Today's episode, generated eagerly so the premiere is ready when the
+  // loop reaches new cards. The interval covers an app left running
+  // overnight — ensureTodayEpisode is a cheap no-op once today's exists.
+  void ensureTodayEpisode();
+  setInterval(() => void ensureTodayEpisode(), 30 * 60 * 1000);
 });
 
 app.on("window-all-closed", () => {

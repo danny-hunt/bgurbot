@@ -15,6 +15,8 @@ interface DayAgg {
   answered: number;
   goodOrEasy: number;
   doseMet: boolean;
+  /** Learner turns taken in role-play scenarios (kept out of recall rates). */
+  scenarioTurns?: number;
 }
 
 interface MilestoneEvent {
@@ -186,6 +188,21 @@ export const recordAnswer = (entry: HistoryEntry): void => {
   scheduleSave();
 };
 
+/**
+ * Count a finished role-play toward today's activity. Scenario turns count
+ * for showing up (weekly goal) but stay out of answered/goodOrEasy so card
+ * recall rates aren't diluted.
+ */
+export const recordScenarioTurns = (turns: number): void => {
+  if (turns <= 0) return;
+  const key = dayKey();
+  const day = state.days[key] ?? emptyDay();
+  day.scenarioTurns = (day.scenarioTurns ?? 0) + turns;
+  state.days[key] = day;
+  state.lastAnsweredAt = Date.now();
+  scheduleSave();
+};
+
 /** Cards answered so far today (local time), across restarts. */
 export const getTodayAnsweredCount = (): number => state.days[dayKey()]?.answered ?? 0;
 
@@ -207,9 +224,9 @@ export const getDaysSinceLastActivity = (): number | null => {
 export const getRecentHistory = (limit = 50): HistoryEntry[] =>
   state.history.slice(-limit).reverse();
 
-/** A day counts toward the weekly goal if the dose was met or answers hit the floor. */
+/** A day counts toward the weekly goal if the dose was met or activity hit the floor. */
 const dayMet = (d: DayAgg | undefined): boolean =>
-  !!d && (d.doseMet || d.answered >= MET_ANSWER_FLOOR);
+  !!d && (d.doseMet || d.answered + (d.scenarioTurns ?? 0) >= MET_ANSWER_FLOOR);
 
 /** Met days in the Mon–Sun week starting at `monday`. */
 const metDaysInWeek = (monday: Date): number => {

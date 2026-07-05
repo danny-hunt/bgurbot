@@ -306,6 +306,45 @@ function App() {
         </label>
       </div>
 
+      <h2>Story</h2>
+      <div className="row">
+        <label>Daily episode</label>
+        <label>
+          <input
+            type="checkbox"
+            checked={settings.storyEnabled}
+            onChange={(e) => persist({ storyEnabled: e.target.checked })}
+          />{" "}
+          daily story episode as your new cards
+        </label>
+      </div>
+      <div className="row">
+        <label>About you — the story is built from this</label>
+        <div>
+          <textarea
+            rows={5}
+            value={settings.aboutMe}
+            onChange={(e) => persist({ aboutMe: e.target.value })}
+            // The stylesheet only styles inputs/selects — match them inline.
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              padding: "4px 6px",
+              font: "inherit",
+              fontSize: 13,
+              color: "inherit",
+              border: "1px solid rgba(128,128,128,0.4)",
+              borderRadius: 4,
+              background: "transparent",
+              resize: "vertical",
+            }}
+          />
+          <span className="hint">
+            people, places, plans — the serial's protagonist and world come from here
+          </span>
+        </div>
+      </div>
+
       <h2>Pacing</h2>
       <div className="row">
         <label>Pause before translation (s)</label>

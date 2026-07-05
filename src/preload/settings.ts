@@ -3,12 +3,16 @@ import type {
   CardSnapshot,
   CostReport,
   Ease,
+  GeneratedSentence,
   HistoryEntry,
   OneOffAudioRequest,
   ReplySuggestion,
+  ScenarioContext,
+  ScenarioTurnResult,
   Settings,
   StatsReport,
   StatusReport,
+  StoryPublicState,
   TranslationLookup,
 } from "../shared/types";
 
@@ -42,6 +46,17 @@ export interface SettingsBridge {
   // Learning stats
   getStats: () => Promise<StatsReport>;
   getRecentHistory: () => Promise<HistoryEntry[]>;
+  // Story serial
+  getStory: () => Promise<StoryPublicState | null>;
+  // Scenario role-plays (one active scenario at a time, held in main)
+  scenarioContexts: () => Promise<ScenarioContext[]>;
+  scenarioStart: (contextId: string) => Promise<ScenarioTurnResult>;
+  /** Continue with the reply the learner chose (or typed). */
+  scenarioReply: (reply: ReplySuggestion) => Promise<ScenarioTurnResult>;
+  /** End (or abandon) the active scenario; records activity stats. */
+  scenarioEnd: () => Promise<{ turns: number }>;
+  /** Save a line from the scenario as a regular Anki card. */
+  scenarioSave: (line: GeneratedSentence) => Promise<{ ok: boolean }>;
 }
 
 const subscribe = <T,>(channel: string) => (cb: (payload: T) => void) => {
@@ -74,6 +89,12 @@ const bridge: SettingsBridge = {
   resetCosts: () => ipcRenderer.invoke("costs:reset"),
   getStats: () => ipcRenderer.invoke("stats:get"),
   getRecentHistory: () => ipcRenderer.invoke("history:recent"),
+  getStory: () => ipcRenderer.invoke("story:state"),
+  scenarioContexts: () => ipcRenderer.invoke("scenario:contexts"),
+  scenarioStart: (contextId) => ipcRenderer.invoke("scenario:start", contextId),
+  scenarioReply: (reply) => ipcRenderer.invoke("scenario:reply", reply),
+  scenarioEnd: () => ipcRenderer.invoke("scenario:end"),
+  scenarioSave: (line) => ipcRenderer.invoke("scenario:save", line),
 };
 
 contextBridge.exposeInMainWorld("api", bridge);
