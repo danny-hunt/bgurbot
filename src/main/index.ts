@@ -15,7 +15,9 @@ import { getRecentHistory, getStatsReport, initStatsStore } from "./services/sta
 import { ensureTodayEpisode, getPublicState, initStoryStore, storyGenerationInFlight } from "./services/story";
 import { registerScenarioIpc } from "./services/scenario";
 import { initReminder, rescheduleReminder } from "./services/reminder";
+import { localDayKey } from "@shared/utils";
 import type {
+  AppNotice,
   CardSnapshot,
   Ease,
   HistoryEntry,
@@ -23,10 +25,14 @@ import type {
   ReplySuggestion,
   Settings,
   StatusReport,
+  TopUpResult,
 } from "@shared/types";
 
 dotenv.config({ path: path.join(app.getAppPath(), ".env") });
 dotenv.config(); // also try cwd
+// Packaged app: the asar has no .env and the Finder cwd is "/", so secrets
+// live next to the other app data instead (~/Library/Application Support/bgurbot/.env).
+dotenv.config({ path: path.join(app.getPath("userData"), ".env") });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RENDERER_DIR = path.join(__dirname, "..", "renderer");
@@ -63,8 +69,37 @@ loop.on("status", broadcastStatus);
 loop.on("card", (snapshot: CardSnapshot | null) => broadcast("card:update", snapshot));
 loop.on("history", (entry: HistoryEntry) => broadcast("history:append", entry));
 
-const triggerTopUp = async (sentenceCount = 10, storyFirst = false) => {
-  if (topUpInFlight) return;
+/** Transient toast shown in every open window. */
+const notify = (text: string, error = false) => {
+  const notice: AppNotice = { text, error };
+  broadcast("notify", notice);
+};
+
+/** Max automatic (loop-requested) top-ups per local day — a runaway backstop. */
+const AUTO_TOPUP_DAILY_CAP = 5;
+let autoTopUps = { day: localDayKey(), count: 0 };
+
+const triggerTopUp = async (
+  sentenceCount = 10,
+  opts: { storyFirst?: boolean; auto?: boolean } = {},
+): Promise<TopUpResult> => {
+  if (topUpInFlight) {
+    return { ok: false, busy: true, added: 0, skipped: 0, error: "another generation is already running" };
+  }
+  if (opts.auto) {
+    // Even with the loop's headroom gate, repeated failures or all-duplicate
+    // batches would re-trigger every 30s all day. Cap automatic runs; manual
+    // runs (tray, settings) are never capped.
+    if (autoTopUps.day !== localDayKey()) autoTopUps = { day: localDayKey(), count: 0 };
+    if (autoTopUps.count >= AUTO_TOPUP_DAILY_CAP) {
+      if (autoTopUps.count === AUTO_TOPUP_DAILY_CAP) {
+        autoTopUps.count += 1; // notify exactly once per day
+        notify(`Automatic generation paused until tomorrow (${AUTO_TOPUP_DAILY_CAP} runs today)`, true);
+      }
+      return { ok: false, added: 0, skipped: 0, error: "daily automatic generation cap reached" };
+    }
+    autoTopUps.count += 1;
+  }
   topUpInFlight = true;
   loop.setGenerating(true);
   const settings = getSettings();
@@ -73,20 +108,21 @@ const triggerTopUp = async (sentenceCount = 10, storyFirst = false) => {
     // for a top-up, generate it first and skip the generic populate for this
     // round. Generic populate remains the fallback (story disabled, today's
     // episode already generated, or generation failed).
-    if (storyFirst) {
+    if (opts.storyFirst) {
       if (await ensureTodayEpisode()) {
         console.log("Top-up: story episode generated — skipping generic top-up");
-        return;
+        notify("Today's story episode is ready");
+        return { ok: true, story: true, added: 0, skipped: 0 };
       }
       // A generation kicked off elsewhere (startup / periodic check) is
       // about to deliver the day's material — don't populate on top of it.
       if (storyGenerationInFlight()) {
         console.log("Top-up: story episode already generating — skipping generic top-up");
-        return;
+        return { ok: false, busy: true, added: 0, skipped: 0 };
       }
     }
     console.log(`Top-up: generating ${sentenceCount} sentences…`);
-    await populate({
+    const { added, skipped } = await populate({
       vocabSourceDeck: settings.vocabSourceDeck,
       bgbotDeckName: settings.bgbotDeckName,
       totalSentences: sentenceCount,
@@ -95,8 +131,22 @@ const triggerTopUp = async (sentenceCount = 10, storyFirst = false) => {
       revPerDay: settings.reviewsPerDay,
       onProgress: (m) => console.log("[top-up]", m),
     });
+    if (added > 0) {
+      notify(
+        `Generated ${added} new sentence${added === 1 ? "" : "s"}` +
+          (skipped > 0 ? ` (${skipped} duplicate${skipped === 1 ? "" : "s"} skipped)` : ""),
+      );
+    } else if (skipped > 0) {
+      notify(`Generated nothing new — all ${skipped} were duplicates`, true);
+    } else {
+      notify("Generation produced no usable sentences — see logs", true);
+    }
+    return { ok: added > 0, added, skipped };
   } catch (err) {
     console.error("Top-up failed:", err);
+    const message = err instanceof Error ? err.message : String(err);
+    notify(`Generation failed: ${message}`, true);
+    return { ok: false, added: 0, skipped: 0, error: message };
   } finally {
     topUpInFlight = false;
     loop.setGenerating(false);
@@ -104,7 +154,7 @@ const triggerTopUp = async (sentenceCount = 10, storyFirst = false) => {
 };
 
 loop.setTopUpHandler(() => {
-  void triggerTopUp(10, true);
+  void triggerTopUp(10, { storyFirst: true, auto: true });
 });
 
 const applyLoginItem = (settings: Settings) => {
@@ -239,10 +289,7 @@ ipcMain.handle("anki:dueCount", async () => {
   const deck = getSettings().bgbotDeckName;
   return new AnkiService().countDueCards(deck);
 });
-ipcMain.handle("populate:run", async (_e, count: number) => {
-  await triggerTopUp(count);
-  return { ok: true };
-});
+ipcMain.handle("populate:run", (_e, count: number): Promise<TopUpResult> => triggerTopUp(count));
 ipcMain.handle(
   "loop:control",
   (_e, action: "pause" | "resume" | "skip" | "replay" | "replayTranslation") => {

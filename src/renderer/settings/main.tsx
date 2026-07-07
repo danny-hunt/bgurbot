@@ -196,9 +196,15 @@ function App() {
       setFailedHotkeys(failed);
       showToast(`Failed to register: ${failed.join(", ")}`);
     });
+    // Generation results/failures broadcast from main (guarded for stale builds).
+    const off3 =
+      typeof window.api.onNotify === "function"
+        ? window.api.onNotify((n) => showToast(n.text))
+        : () => {};
     return () => {
       off1();
       off2();
+      off3();
     };
   }, []);
 
@@ -458,8 +464,10 @@ function App() {
           <button
             onClick={async () => {
               showToast(`generating ${populateCount}…`);
-              await window.api.runPopulate(populateCount);
-              showToast(`generated ${populateCount}`);
+              // The outcome toast ("Generated N…" / "Generation failed: …")
+              // arrives via the notify broadcast; only "busy" is silent there.
+              const res = await window.api.runPopulate(populateCount);
+              if (res?.busy) showToast("A generation is already running — try again shortly");
             }}
           >
             Generate now

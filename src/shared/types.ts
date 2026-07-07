@@ -185,8 +185,28 @@ export type LoopStatus =
   | "playingTranslation"
   | "waitingRating"
   | "doseComplete"
+  /** Queue empty and the daily new-card cap is exhausted — parked until due/rollover. */
+  | "caughtUp"
   | "topUp"
   | "ankiUnreachable";
+
+/** Outcome of a top-up/populate run, returned over IPC and shown in toasts. */
+export interface TopUpResult {
+  ok: boolean;
+  added: number;
+  skipped: number;
+  /** True when the run was refused because another generation was in flight. */
+  busy?: boolean;
+  /** True when today's story episode was generated instead of a generic batch. */
+  story?: boolean;
+  error?: string;
+}
+
+/** Transient user-facing notice, broadcast to all windows as a toast. */
+export interface AppNotice {
+  text: string;
+  error?: boolean;
+}
 
 /** The episode currently premiering (playing in order as today's new cards). */
 export interface EpisodeRef {

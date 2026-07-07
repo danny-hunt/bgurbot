@@ -233,43 +233,35 @@ export class AnkiService {
   /**
    * Ensure the bgbot deck exists with a dedicated options group whose new/review
    * caps match the user's settings. Idempotent — safe to run on every startup.
+   *
+   * Safety guarantee: only ever saves changes to the app's own "bgbot" group.
+   * If the deck is on another group (e.g. Default, shared by every deck in the
+   * collection), a clone is created and assigned first; if cloning or the
+   * assignment fails, this bails without touching the foreign group.
    */
   async ensureDeckOptions(deckName: string, newPerDay: number, revPerDay: number): Promise<void> {
     await this.createDeck(deckName);
-    const allConfigs = await this.invoke<Array<{ id: number; name: string }>>(
-      "getDeckConfig",
-      { deck: "Default" },
-    ).then(async () => {
-      // getDeckConfig returns config for a single deck. There is no plain
-      // "list all configs" endpoint, but saveDeckConfig accepts a config
-      // object and createDeckConfigId clones an existing one. Use the deck's
-      // current config as a starting point.
-      const cfg = await this.invoke<any>("getDeckConfig", { deck: deckName });
-      return [cfg];
-    }).catch(() => [] as Array<{ id: number; name: string }>);
+    let cfg: any = await this.invoke<any>("getDeckConfig", { deck: deckName }).catch(() => null);
+    if (!cfg) return; // can't configure; bail silently
 
-    let cfg: any = allConfigs[0];
-    if (!cfg || cfg.name !== AnkiService.OPTIONS_GROUP) {
-      // Clone current config under a new name to avoid mutating Default
+    if (cfg.name !== AnkiService.OPTIONS_GROUP) {
+      // Clone the current config under our own name — never mutate a group
+      // we don't own.
       const newId = await this.invoke<number>("cloneDeckConfigId", {
         name: AnkiService.OPTIONS_GROUP,
-        cloneFrom: cfg?.id ?? 1,
+        cloneFrom: cfg.id ?? 1,
       }).catch(() => null);
-      if (newId) {
-        cfg = await this.invoke<any>("getDeckConfig", { deck: deckName });
-        cfg.id = newId;
-        cfg.name = AnkiService.OPTIONS_GROUP;
-        await this.invoke("setDeckConfigId", { decks: [deckName], configId: newId });
-        cfg = await this.invoke<any>("getDeckConfig", { deck: deckName });
-      }
+      if (!newId) return;
+      await this.invoke("setDeckConfigId", { decks: [deckName], configId: newId });
+      cfg = await this.invoke<any>("getDeckConfig", { deck: deckName }).catch(() => null);
+      // Defensive: only proceed if the deck really is on our group now.
+      if (!cfg || cfg.name !== AnkiService.OPTIONS_GROUP) return;
     }
-    if (!cfg) return; // can't configure; bail silently
 
     cfg.new = cfg.new ?? {};
     cfg.rev = cfg.rev ?? {};
     cfg.new.perDay = newPerDay;
     cfg.rev.perDay = revPerDay;
-    cfg.name = AnkiService.OPTIONS_GROUP;
     await this.invoke("saveDeckConfig", { config: cfg });
   }
 }

@@ -371,9 +371,19 @@ export class Loop extends EventEmitter {
         console.log(`[loop] fetched ${dueIds.length} playable cards (newToday=${this.newToday})`);
 
         if (dueIds.length === 0 && premiereId === null) {
-          this.setStatus("topUp", "no due cards — requesting top-up");
-          this.onTopUpNeeded?.();
-          if ((await this.wait(30000)) === "aborted") continue;
+          // Only ask for a top-up when new cards can still be introduced
+          // today. With the cap exhausted, freshly generated cards can't be
+          // played, the queue stays empty, and the request would repeat
+          // every 30s — a runaway generation loop. Park instead; a new day
+          // (or newly due reviews) unparks it.
+          if (this.newToday < settings.newCardsPerDay) {
+            this.setStatus("topUp", "no due cards — requesting top-up");
+            this.onTopUpNeeded?.();
+            if ((await this.wait(30000)) === "aborted") continue;
+          } else {
+            this.setStatus("caughtUp", "caught up — nothing more to play today");
+            if ((await this.wait(60_000)) === "aborted") continue;
+          }
           continue;
         }
 
@@ -401,36 +411,51 @@ export class Loop extends EventEmitter {
 
         await this.playCard(cardWithDir);
 
-        // Submit rating (default Again if user didn't press anything)
         const explicitlyRated = this.currentRating !== null;
-        const ease: Ease = this.currentRating ?? 1;
-        try {
-          const answered = await this.anki.answerCards([{ cardId: card.cardId, ease }]);
-          if (answered[0] === false) {
-            console.warn(`[loop] answerCards returned false for card ${card.cardId} — rating not recorded`);
-          }
-          const entry: HistoryEntry = {
-            snapshot: cardWithDir.snapshot,
-            ease,
-            answeredAt: Date.now(),
-          };
-          // Skipped cards (default Again) count too — they were listened to.
-          recordAnswer(entry);
-          this.sittingAnswered += 1;
-          this.emit("history", entry);
-        } catch (err) {
-          console.warn("answerCards failed", err);
+        const skippedCard = this.skipRequested;
+
+        // Pause/stop mid-card leaves the card untouched: no rating, no
+        // history, no dose credit. It stays due and comes back on resume.
+        if (!explicitlyRated && (this.paused || !this.running)) {
+          this.current = null;
+          this.currentRating = null;
+          this.emit("card", null);
+          continue;
         }
+
+        if (explicitlyRated) {
+          const ease: Ease = this.currentRating!;
+          try {
+            const answered = await this.anki.answerCards([{ cardId: card.cardId, ease }]);
+            if (answered[0] === false) {
+              console.warn(`[loop] answerCards returned false for card ${card.cardId} — rating not recorded`);
+            }
+            const entry: HistoryEntry = {
+              snapshot: cardWithDir.snapshot,
+              ease,
+              answeredAt: Date.now(),
+            };
+            recordAnswer(entry);
+            this.sittingAnswered += 1;
+            this.emit("history", entry);
+          } catch (err) {
+            console.warn("answerCards failed", err);
+          }
+        }
+        // Skipped without a rating: a real skip. Nothing is submitted to
+        // Anki, nothing is recorded, and the dose doesn't advance — the
+        // card just goes to the back of this session's rotation
+        // (lastPlayedAt was stamped when it started).
 
         this.current = null;
         this.currentRating = null;
         this.emit("card", null);
 
-        // Manual mode: wait for skip before fetching next. An explicit
-        // rating always advances straight to the next card, so skip the wait.
+        // Manual mode: wait for skip before fetching next. A rating or a
+        // skip both mean "move on" and advance straight to the next card.
         // The finish line supersedes this wait — loop back so the dose gate
         // at the top parks the loop (and emits the one-shot) instead.
-        if (!getSettings().autoAdvance && !explicitlyRated && !this.atFinishLine()) {
+        if (!getSettings().autoAdvance && !explicitlyRated && !skippedCard && !this.atFinishLine()) {
           this.setStatus("idle", "waiting for next (skip hotkey)");
           while (this.running && !this.paused && !this.skipRequested) {
             if ((await this.wait(60_000)) === "aborted") break;

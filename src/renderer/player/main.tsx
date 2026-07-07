@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ScenarioView } from "./scenario";
 import type {
+  AppNotice,
   CardSnapshot,
   DayActivity,
   Ease,
@@ -30,6 +31,7 @@ const HISTORY_MAX = 50;
 const statusText = (s: StatusReport): string => {
   if (s.status === "waitingRating") return "rate to continue";
   if (s.status === "doseComplete") return "done for today";
+  if (s.status === "caughtUp") return "caught up for today";
   return s.status;
 };
 
@@ -49,7 +51,7 @@ const historyKey = (e: HistoryEntry): string => `${e.snapshot.cardId}-${e.answer
 const dotClass = (s: StatusReport | null): string => {
   if (!s) return "";
   if (s.status === "ankiUnreachable") return "error";
-  if (s.status === "paused" || s.status === "idle") return "paused";
+  if (s.status === "paused" || s.status === "idle" || s.status === "caughtUp") return "paused";
   return "active";
 };
 
@@ -545,6 +547,7 @@ function App() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [stats, setStats] = useState<StatsReport | null>(null);
   const [scenarioOpen, setScenarioOpen] = useState(false);
+  const [notice, setNotice] = useState<AppNotice | null>(null);
   const cardIdRef = useRef<number | null>(null);
   const prevStatusRef = useRef<LoopStatus | null>(null);
 
@@ -564,6 +567,9 @@ function App() {
     void window.api.getCard().then(setCard);
     const offStatus = window.api.onStatus(setStatus);
     const offCard = window.api.onCard(setCard);
+    // Guarded like getStats — a stale main build may lack the channel.
+    const offNotify =
+      typeof window.api.onNotify === "function" ? window.api.onNotify(setNotice) : () => {};
     const offHistory = window.api.onHistory((entry) => {
       setHistory((h) =>
         h.some((e) => historyKey(e) === historyKey(entry))
@@ -596,10 +602,18 @@ function App() {
       offStatus();
       offCard();
       offHistory();
+      offNotify();
       clearInterval(statsTimer);
       window.removeEventListener("focus", onFocus);
     };
   }, [refreshStats]);
+
+  // Toasts dismiss themselves; errors linger a little longer.
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), notice.error ? 6000 : 4000);
+    return () => clearTimeout(t);
+  }, [notice]);
 
   // Re-pull stats once when the finish line is crossed (not on every status
   // update — those arrive constantly during playback).
@@ -698,9 +712,11 @@ function App() {
             <div className="empty">
               {status?.status === "ankiUnreachable"
                 ? "Anki is not reachable — open Anki desktop with AnkiConnect."
-                : status?.status === "topUp" || status?.generating
-                  ? "Generating new sentences…"
-                  : "Waiting for the next card…"}
+                : status?.status === "caughtUp"
+                  ? "All caught up — nothing more to play today."
+                  : status?.status === "topUp" || status?.generating
+                    ? "Generating new sentences…"
+                    : "Waiting for the next card…"}
             </div>
           </div>
         )}
@@ -748,6 +764,12 @@ function App() {
           </>
         )}
       </div>
+
+      {notice && (
+        <div className={`toast${notice.error ? " error" : ""}`} role="status">
+          {notice.text}
+        </div>
+      )}
 
       <div className="footer">
         <span className="muted">bgurbot</span>

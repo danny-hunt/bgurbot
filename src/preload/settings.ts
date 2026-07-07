@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  AppNotice,
   CardSnapshot,
   CostReport,
   Ease,
@@ -13,6 +14,7 @@ import type {
   StatsReport,
   StatusReport,
   StoryPublicState,
+  TopUpResult,
   TranslationLookup,
 } from "../shared/types";
 
@@ -25,10 +27,12 @@ export interface SettingsBridge {
   getStatus: () => Promise<StatusReport>;
   onStatus: (cb: (status: StatusReport) => void) => () => void;
   onHotkeysFailed: (cb: (failed: string[]) => void) => () => void;
+  /** Transient notices (generation results/failures) shown as toasts. */
+  onNotify: (cb: (notice: AppNotice) => void) => () => void;
   testAnki: () => Promise<boolean>;
   listDecks: () => Promise<string[]>;
   dueCount: () => Promise<number>;
-  runPopulate: (count: number) => Promise<{ ok: boolean }>;
+  runPopulate: (count: number) => Promise<TopUpResult>;
   controlLoop: (action: LoopAction) => Promise<void>;
   settingsPath: () => Promise<string>;
   // Player window
@@ -71,6 +75,7 @@ const bridge: SettingsBridge = {
   getStatus: () => ipcRenderer.invoke("status:get"),
   onStatus: subscribe<StatusReport>("status:update"),
   onHotkeysFailed: subscribe<string[]>("hotkeys:failed"),
+  onNotify: subscribe<AppNotice>("notify"),
   testAnki: () => ipcRenderer.invoke("anki:test"),
   listDecks: () => ipcRenderer.invoke("anki:decks"),
   dueCount: () => ipcRenderer.invoke("anki:dueCount"),

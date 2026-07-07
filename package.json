@@ -9,7 +9,30 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "populate": "electron-vite build && node out/main/populate.js",
-    "seed": "electron-vite build && node out/main/seed.js"
+    "seed": "electron-vite build && node out/main/seed.js",
+    "dist": "electron-vite build && electron-builder",
+    "dist:dir": "electron-vite build && electron-builder --dir"
+  },
+  "build": {
+    "appId": "com.danny.bgurbot",
+    "productName": "bgurbot",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**",
+      "package.json"
+    ],
+    "npmRebuild": false,
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.education",
+      "identity": null,
+      "notarize": false
+    }
   },
   "dependencies": {
     "@azure-rest/ai-translation-text": "^1.0.0-beta.1",
@@ -24,6 +47,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
     "electron": "^33.2.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^2.3.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

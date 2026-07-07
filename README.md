@@ -20,7 +20,7 @@ The core of the app is an infinite loop that, while running:
 2. Fetches the next playable card from the `bgbot` deck — review-due cards first, then new cards up to the configured daily cap.
 3. Determines direction from the card template: ord 0 is **English → Urdu**, ord 1 is **Urdu → English** (every note produces both cards).
 4. Plays the **source** audio, waits a configurable pause (`pauseSeconds`, default 10 s) for you to mentally translate, then plays the **translation** audio, then waits (indefinitely) for you to rate the card before moving on. Rating at **any** point — even mid-audio or during the think-pause — ends the card immediately and moves on; skip does the same without a rating.
-5. Submits your rating to Anki's scheduler (`answerCards`). If you skipped without rating, it defaults to **Again**, so the card stays in rotation.
+5. Submits your rating to Anki's scheduler (`answerCards`) — **only explicit ratings reach Anki**. A skip is a real skip: nothing is submitted or recorded, the dose doesn't advance, and the card just goes to the back of the session's rotation. Pausing (or quitting) mid-card likewise leaves the card untouched; it comes back on resume.
 
 Audio comes from the card's stored `[sound:...]` media file when present, with on-the-fly Azure TTS as a fallback. Playback happens in a hidden 1×1 renderer window (`src/main/audio.ts` + `src/renderer/audio/`) because the Electron main process has no audio device; MP3 buffers are shipped over IPC and played with an HTML `Audio` element.
 
@@ -28,7 +28,7 @@ With **auto-advance off**, the loop stops after each card and waits for the skip
 
 ### 2. Automatic deck top-up (sentence generation)
 
-When the loop finds no due/new cards, it triggers a **top-up**: 10 new sentences are generated and added to Anki (`src/main/services/populate.ts`, `sentenceGen.ts`):
+When the loop finds no due/new cards **and new cards can still be introduced today**, it triggers a **top-up**: 10 new sentences are generated and added to Anki (`src/main/services/populate.ts`, `sentenceGen.ts`). With the daily new-card cap already exhausted the loop parks at a "caught up" state instead of generating cards it can't play, and automatic top-ups are additionally capped at 5 runs per day as a runaway backstop (manual runs from the tray/settings are never capped). Every generation's outcome — added count, duplicates, or the failure reason — is shown as a toast in the player and settings windows.
 
 - Vocabulary is harvested from a source deck (default `Ling::Urdu`, reading `worden`/`word` or `en`/`ur` fields) into English/Urdu word pools.
 - A random sample of ~80 words is sent to Azure OpenAI with a prompt asking for conversational 6–14-word sentences as strict JSON (`english`, `urduArabic`, `urduRoman`).
@@ -84,6 +84,9 @@ AZURE_OPENAI_API_KEY=   # Azure OpenAI key (gpt-5-nano deployment)
 
 Anki desktop must be running with the AnkiConnect add-on on the default port.
 
+For the **packaged app** (see below), `.env` next to the source tree isn't visible — put it at
+`~/Library/Application Support/bgurbot/.env` instead (the app's userData directory).
+
 ## Scripts
 
 | Command | Description |
@@ -92,6 +95,20 @@ Anki desktop must be running with the AnkiConnect add-on on the default port.
 | `npm run build` | Build to `out/` |
 | `npm run start` | Preview the built app |
 | `npm run populate` | Build, then bulk-generate cards from the CLI |
+| `npm run dist` | Build and package a real macOS app (dmg + zip in `release/`) |
+| `npm run dist:dir` | Fast unsigned `.app` build in `release/` for local checks |
+
+## Packaging
+
+`npm run dist` produces `release/bgurbot-<version>.dmg` (and a zip) via electron-builder.
+Running the packaged app is what makes **Start at login** work (`app.setLoginItemSettings`
+is a no-op in dev), which in turn makes the daily reminder reliable.
+
+Notes:
+
+- The build is unsigned and un-notarized — on first launch use right-click → Open.
+- The packaged app reads secrets from `~/Library/Application Support/bgurbot/.env`
+  (copy your dev `.env` there once).
 
 ## Source layout
 
